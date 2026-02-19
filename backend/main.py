@@ -1,65 +1,79 @@
-# main.py
-from fastapi import FastAPI, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from passlib.context import CryptContext
-
-# 우리가 만든 파일들 불러오기
-from database import get_db
-import models
 import schemas
+from fastapi import FastAPI, HTTPException
+import schemas # 만들어둔 양식 가져오기
 
 app = FastAPI()
 
-# 비밀번호 암호화 도구 (bcrypt 알고리즘)
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+fake_db = []
+post_id_counter = 1
 
 @app.get("/")
-async def mainpage():
-    return {"message": "Hello World", "status": "Server is running!"}
+def mainpage():
+    return {"message": "Hello World", "status": "fakeDB로 연습"}
 
-# 1. 회원가입 API
-@app.post("/signup", response_model=schemas.UserResponse, status_code=status.HTTP_201_CREATED)
-async def signup(user: schemas.UserCreate, db: AsyncSession = Depends(get_db)):
+@app.post("/post", response_model = schemas.PostResponse)
+def create_post(post: schemas.PostCreate):
+    global post_id_counter
+
+    new_post = {
+        "id": post_id_counter,
+        "title": post.title,
+        "content": post.content
+    }
+
+    fake_db.append(new_post)
+
+    post_id_counter += 1
+
+    return new_post
+
+@app.get("/posts")
+def get_posts():
+    return fake_db
+
+@app.patch("/posts/{post_id}")
+def update_post(post_id: int, post_update: schemas.PostCreate):
+    for item in fake_db:
+        if item["id"] == post_id:
+            item["title"] = post_update.title
+            item["content"] = post_update.content
+            return item
     
-    # [Step 1] 이메일 중복 체크
-    # DB에서 같은 이메일이 있는지 조회합니다.
-    result = await db.execute(select(models.User).where(models.User.email == user.email))
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="이미 등록된 이메일입니다.")
+    raise HTTPException(status_code=404, detail="수정할 게시글이 없습니다.")
 
-    # [Step 2] 비밀번호 암호화
-    # 사용자가 입력한 "1234"를 "$2b$12$..." 같은 외계어로 바꿉니다.
-    hashed_pw = pwd_context.hash(user.password)
-
-    # [Step 3] DB 저장용 객체 생성 (Entity)
-    new_user = models.User(
-        email=user.email,
-        hashed_password=hashed_pw,
-        nickname=user.nickname,
-        role="user"
-    )
-
-    # [Step 4] 저장 및 확정
-    db.add(new_user)      # 메모리에 추가
-    await db.commit()     # DB에 진짜 저장
-    await db.refresh(new_user) # 저장된 데이터(ID 등) 다시 가져오기
-
-    return new_user
-
-# 2. 게시글 작성 API (테스트용)
-@app.post("/posts", status_code=status.HTTP_201_CREATED)
-async def create_post(post: schemas.PostCreate, db: AsyncSession = Depends(get_db)):
+@app.delete("/posts/{post_id}")
+def delete_post(post_id: int):
+    for i, item in enumerate(fake_db):
+        if item["id"] == post_id:
+            del fake_db[i]
+            return {"message": f"{post_id}번 게시글 삭제 완료"}
     
-    # 지금은 로그인 기능이 없으니, 무조건 1번 유저가 쓴다고 가정합니다.
-    # (주의: DB에 id=1인 유저가 먼저 있어야 에러가 안 납니다!)
-    new_post = models.Post(
-        title=post.title,
-        content=post.content,
-        user_id=1 
-    )
-    
-    db.add(new_post)
-    await db.commit()
-    
-    return {"message": "게시글 작성 성공"}
+    raise HTTPException(status_code=404, detail="삭제할 게시글이 없습니다.")
+
+# ==========================================
+# 🚀 파라미터 3대장 테스트 구역
+# ==========================================
+
+# 1. Path Parameter 테스트
+# 주소의 일부분을 변수처럼 쏙 빼온다.
+@app.get("/test/path/{user_name}")
+def test_path(user_name: str):
+    return {"message": f"환영합니다. {user_name}님! (경로 파라미터 확인)"}
+
+# 2. Query Parameter 테스트
+# 주소 끝에 ?와 &를 붙여서 욥션을 전달합니다. page는 안 적으면 기본값 1입니다.
+@app.get("/test/query")
+def test_query(keyword: str, page: int = 1):
+    return{
+        "message": f"검색어 '{keyword}의 {page}페이지 결과를 가져옵니다. (쿼리 파라미터 확인)'"
+    }
+
+# 3. Request Body (요청 본문) 테스트
+# 브라우저 주소창으로 테스트 불가 /docs 등을 통해서 사용
+@app.post("/test/body")
+def test_body(data: schemas.PostCreate):
+    return{
+        "message": "숨겨진 박스(Body)로 데이터가 잘 도착했습니다!",
+        "받은_제목": data.title,
+        "받은_내용": data.content
+    }
